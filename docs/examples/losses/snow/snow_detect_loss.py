@@ -15,6 +15,8 @@ import pandas as pd
 import numpy as np
 import re
 import pvlib
+from scipy.integrate import trapezoid
+import itertools
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
 import matplotlib.patches as mpatches
@@ -342,6 +344,10 @@ for vratio, t, v in zip(vratio_cols, t_cols, v_cols):
     new_name = col_name + ' Mode'
     data[new_name] = data[[vratio, t, v]].apply(lambda x: get_mode(x[vratio], x[t], x[v]), axis=1)
 
+#%% Check how often mode values are Nan
+mode_cols = [c for c in data.columns if "Mode" in c and "Modeled" not in c]
+for m in mode_cols:
+    print(f"{m} is NaN: {100*np.round(data[m].isna().sum()/len(data), 2)}%")
 
 #%% Model voltage, current, and power using the SAPM model,
 # without accounting for transmission
@@ -416,4 +422,44 @@ light_blue_patch = mpatches.Patch(color='b', alpha=0.1, ec='k', label='Snowfall 
 handles.append(light_blue_patch)
 ax.legend(handles=handles, fontsize='xx-large')
 ax2.set_ylabel('Snowfall [mm]', fontsize='xx-large')
+# %% Calculate daily losses attributable to snowfall
 
+mode_cols = [c for c in data.columns if "Mode" in c and "Modeled" not in c]
+modeled_power_cols = [c for c in data.columns if "Modeled Power" in c]
+loss_cols = [c for c in data.columns if "Loss" in c]
+
+data[modeled_power_cols] = data[modeled_power_cols].replace({np.nan: 0})
+data[loss_cols] = data[loss_cols].replace({np.nan: 0})
+     
+days = np.unique(data.index.map(lambda x: x.date()))
+columns = itertools.product(days, ['Production [kWh]', 'Loss [%]', 'Snow loss [%]'])
+my_df = pd.DataFrame(index=[re.match(r'INV(\d+) CB(\d+)', m).group(0) for m in mode_cols],
+                     columns=pd.MultiIndex.from_tuples(columns))
+
+for d in days:
+
+    data_day = data[data.index.map(lambda x: x.date()) == d]
+    
+    for i in my_df.index:
+        loss_col = i + ' Loss [W]'
+        modeled_power_col = i + ' Modeled Power [W]'
+        mode_col = i + 'Mode'
+
+        my_index = np.cumsum(np.append(0, np.diff(data_day.index).astype('timedelta64[m]').astype(float)/60))
+
+        total_loss = trapezoid(data_day[loss_col].values, x=my_index)
+        total_modeled_power = trapezoid(data_day[modeled_power_col].values, x=my_index)
+
+        my_df.at[i, pd.IndexSlice[d, 'Production [kWh]']] = (total_modeled_power - total_loss)*0.001
+
+        my_df.at[i, pd.IndexSlice[d, 'Loss [%]']] = 100*(total_loss/total_modeled_power)
+
+        
+        mode_col = i + ' Mode'
+        temp = data_day[loss_col].values
+        temp[np.logical_or(np.isnan(data_day[mode_col]), data_day[mode_col] == 4)] = 0
+
+        total_snow_loss = trapezoid(temp, x=my_index)
+        my_df.at[i, pd.IndexSlice[d, 'Snow loss [%]']] = 100*total_snow_loss/total_modeled_power
+
+my_df
