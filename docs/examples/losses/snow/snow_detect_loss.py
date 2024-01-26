@@ -313,7 +313,8 @@ ax.legend()
 
 vratio_cols = [c for c in data.columns if 'Vmp Ratio' in c]
 t_cols = [c for c in data.columns if 'Transmission' in c]
-v_cols = [c for c in data.columns if re.match(r'INV(\d+) CB(\d)', c) and 'Voltage' in c and 'Ratio' not in c and 'Predicted' not in c]
+v_cols = [c for c in data.columns if re.match(r'INV(\d+) CB(\d)', c)
+          and 'Voltage' in c and 'Ratio' not in c and 'Predicted' not in c]
 
 # Empirically determined through a statistical analysis of a larger dataset
 # for the same site
@@ -321,28 +322,21 @@ v_std, t_std = 1.1102230246251565e-16, 0.007244664857579446
 threshold_vratio, threshold_t = 0.9331598025404861, 0.5976185185741869
 trans_vals_mean = 0.5976185185741869
 
-def get_mode(vratio, t, v):
-    if np.isnan(vratio) or np.isnan(t):
-        return np.nan
-    
-    elif v < float(config['min_dcv']):
-        return 0
-    elif vratio < threshold_vratio:
-        if t < threshold_t:
-            return 1
-        elif t > threshold_t:
-            return 2
-    elif vratio > threshold_vratio:
-        if t < threshold_t:
-            return 3
-        elif t > threshold_t:
-            return 4
-    return np.nan
-
 for vratio, t, v in zip(vratio_cols, t_cols, v_cols):
     col_name = re.match('INV(\d+) CB(\d+)', vratio)[0]
     new_name = col_name + ' Mode'
-    data[new_name] = data[[vratio, t, v]].apply(lambda x: get_mode(x[vratio], x[t], x[v]), axis=1)
+    data[new_name] = data[[vratio,t,
+                           v]].apply(lambda x: \
+                                    snow.categorize(x[vratio], \
+                                                    x[t], \
+                                                    x[v], \
+                                                    turn_on_voltage=\
+                                                        float(config[
+                                                            'min_dcv']),
+                                                    threshold_vratio= \
+                                                        threshold_vratio,
+                                                    threshold_transmission= \
+                                                        threshold_t), axis=1)
 
 #%% Check how often mode values are Nan
 mode_cols = [c for c in data.columns if "Mode" in c and "Modeled" not in c]
